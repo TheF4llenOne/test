@@ -1,5 +1,6 @@
 """
-Trainer class for running DNN models on real data
+Trainer class for running DNN models on real data - PyTorch Version
+FIXED VERSION with all corrections applied
 """
 
 import sys
@@ -228,10 +229,10 @@ class nnTrainer:
         # Set up optimizer (PyTorch manual setup)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
         
-        # Set up callbacks (PyTorch custom classes)
+        # FIXED: Set up callbacks (PyTorch custom classes)
         callbacks = {}
         
-        if len(args.reduce_LR_monitor):
+        if hasattr(args, 'reduce_LR_monitor') and args.reduce_LR_monitor:
             reduce_lr = ReduceLROnPlateau(optimizer, 
                                         monitor=args.reduce_LR_monitor,
                                         factor=args.reduce_LR_factor,
@@ -263,7 +264,8 @@ class nnTrainer:
         print(f'[{args.model_type} model training starts] {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         
         # Manual training loop (PyTorch requirement)
-        history = {'loss': [], 'output_1_loss': [], 'output_2_loss': [], 'val_loss': []}
+        history = {'loss': [], 'output_1_loss': [], 'output_2_loss': [], 
+                  'val_loss': [], 'val_output_1_loss': [], 'val_output_2_loss': []}  # Initialize all keys
         
         for epoch in range(args.epochs):
             # Training phase
@@ -284,8 +286,8 @@ class nnTrainer:
                 
                 optimizer.zero_grad()
                 
-                # Forward pass
-                outputs = model(batch_inputs)  # Returns [x_pred, y_pred]
+                # FIXED: Forward pass
+                outputs = model(batch_inputs, training=True)  # Added training=True
                 
                 # Compute losses
                 loss_x = self.criterion(outputs[0], batch_targets[0])
@@ -305,8 +307,10 @@ class nnTrainer:
             train_output_1_loss /= len(train_loader)
             train_output_2_loss /= len(train_loader)
             
-            # Validation phase
+            # FIXED: Validation phase with proper loss tracking
             val_loss = 0.0
+            val_output_1_loss = 0.0
+            val_output_2_loss = 0.0
             if val_loader is not None:
                 model.eval()
                 with torch.no_grad():
@@ -318,21 +322,27 @@ class nnTrainer:
                         batch_inputs = [inp.to(self.device) for inp in batch_inputs]
                         batch_targets = [tgt.to(self.device) for tgt in batch_targets]
                         
-                        outputs = model(batch_inputs)
+                        outputs = model(batch_inputs, training=False)  # FIXED: Added training=False
                         loss_x = self.criterion(outputs[0], batch_targets[0])
                         loss_y = self.criterion(outputs[1], batch_targets[1])
                         total_loss = loss_x + loss_y
                         
                         val_loss += total_loss.item()
+                        val_output_1_loss += loss_x.item()
+                        val_output_2_loss += loss_y.item()
                 
                 val_loss /= len(val_loader)
+                val_output_1_loss /= len(val_loader)
+                val_output_2_loss /= len(val_loader)
             
-            # Store history
+            # FIXED: Store history with validation losses
             history['loss'].append(train_loss)
             history['output_1_loss'].append(train_output_1_loss)
             history['output_2_loss'].append(train_output_2_loss)
             if val_loader is not None:
                 history['val_loss'].append(val_loss)
+                history['val_output_1_loss'].append(val_output_1_loss)
+                history['val_output_2_loss'].append(val_output_2_loss)
             
             # Apply callbacks
             logs = {'loss': train_loss, 'output_1_loss': train_output_1_loss, 'output_2_loss': train_output_2_loss}
@@ -362,14 +372,14 @@ class nnTrainer:
         args = self.args
         train_inputs, train_targets = train_data
         
-        # PyTorch inference (replaces model.predict)
+        # FIXED: PyTorch inference (replaces model.predict)
         model.eval()
         with torch.no_grad():
             # Convert to tensors and move to device
             input_tensors = [torch.FloatTensor(inp).to(self.device) for inp in train_inputs]
             
             # Get predictions
-            outputs = model(input_tensors)
+            outputs = model(input_tensors, training=False)  # FIXED: Added training=False
             x_is_pred = outputs[0].cpu().numpy()
             y_is_pred = outputs[1].cpu().numpy()
         
@@ -510,14 +520,19 @@ class nnTrainer:
                 del model
                 torch.cuda.empty_cache()  # PyTorch equivalent of K.clear_session()
                     
+        # Export logic with parquet support
         x_PRED_df, y_PRED_df = pd.DataFrame(x_PRED_collector), pd.DataFrame(y_PRED_collector)
         
+        # Export to CSV if requested
         if hasattr(args, 'export_to_csv') and args.export_to_csv:
             x_PRED_df.to_csv(f'{args.output_folder}/x_prediction.csv', index=False)
             y_PRED_df.to_csv(f'{args.output_folder}/y_prediction.csv', index=False)
         
-        # Default Excel output (maintaining backward compatibility)
-        if hasattr(args, 'output_filename'):
-            with pd.ExcelWriter(args.output_filename) as writer:
-                x_PRED_df.to_excel(writer, sheet_name=f'x_prediction', index=False)
-                y_PRED_df.to_excel(writer, sheet_name=f'y_prediction', index=False)
+        # Export to parquet if requested
+        if hasattr(args, 'export_to_parquet') and args.export_to_parquet:
+            x_PRED_df.to_parquet(f'{args.output_folder}/x_prediction.parquet', index=False)
+            y_PRED_df.to_parquet(f'{args.output_folder}/y_prediction.parquet', index=False)
+        
+        # Save predictions as pickle
+        with open(f"{args.output_folder}/predictions.pickle", "wb") as handle:
+            pickle.dump({'x_target_pred': x_PRED_collector, 'y_target_pred': y_PRED_collector}, handle, protocol=pickle.HIGHEST_PROTOCOL)

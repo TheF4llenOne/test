@@ -1,0 +1,21 @@
+MTMFSeq2Seq(
+  (pre_attn): PreAttnEncoder(
+    (lstm): LSTM(8, 256, batch_first=True)
+  )
+  (one_step_attention_x): OneStepAttn(
+    (densor1): Linear(in_features=768, out_features=32, bias=True)
+    (densor2): Linear(in_features=32, out_features=1, bias=True)
+  )
+  (one_step_attention_y): OneStepAttn(
+    (densor1): Linear(in_features=768, out_features=64, bias=True)
+    (densor2): Linear(in_features=64, out_features=1, bias=True)
+  )
+  (post_attn_x): LSTMCell(264, 256)
+  (ffn1_x): Linear(in_features=256, out_features=256, bias=True)
+  (dropout_fn_x): Dropout(p=0.3, inplace=False)
+  (ffn2_x): Linear(in_features=256, out_features=8, bias=True)
+  (post_attn_y): LSTMCell(283, 512)
+  (ffn1_y): Linear(in_features=512, out_features=128, bias=True)
+  (dropout_fn_y): Dropout(p=0.3, inplace=False)
+  (ffn2_y): Linear(in_features=128, out_features=27, bias=True)
+)

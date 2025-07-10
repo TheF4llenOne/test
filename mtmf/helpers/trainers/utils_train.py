@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 
 import matplotlib.pyplot as plt
-plt.style.use('seaborn-whitegrid')
+plt.style.use('ggplot')
 from matplotlib.gridspec import GridSpec
 
 def plot_loss_over_epoch(history, args, save_as_file=""):

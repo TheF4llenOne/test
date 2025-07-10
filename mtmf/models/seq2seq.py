@@ -144,8 +144,8 @@ class MTMFSeq2Seq(nn.Module):
         self.pre_attn = PreAttnEncoder(dim_x, n_a, dropout_rate=dropout_rate, 
                                       bidirectional_encoder=bidirectional_encoder)
         ## for the attention alignment model
-        self.one_step_attention_x = OneStepAttn(n_a + n_a)  # concat size
-        self.one_step_attention_y = OneStepAttn(n_a + n_s)  # concat size
+        self.one_step_attention_x = OneStepAttn(input_size=n_a + n_s, n_align=n_align_x)
+        self.one_step_attention_y = OneStepAttn(input_size=n_a + n_s, n_align=n_align_y)
         
         ## for the x decoder
         self.post_attn_x = nn.LSTMCell(n_a + dim_x, n_a)

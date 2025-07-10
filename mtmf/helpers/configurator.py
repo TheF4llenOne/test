@@ -206,8 +206,8 @@ class EnvConfigurator():
             # Find a reasonable split point (e.g., 80% for training)
             total_y_points = len(y)
             split_point_idx = int(0.8 * total_y_points)
-            split_y_hour = y.index.sort_values().iloc[split_point_idx]
-            
+            split_y_hour = y.index.sort_values()[split_point_idx]
+
             # Create a synthetic datetime for the split point
             base_date = pd.Timestamp('2020-01-01')
             setattr(self.args, 'first_prediction_date', base_date)
