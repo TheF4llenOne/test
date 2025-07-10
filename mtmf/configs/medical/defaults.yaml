@@ -1,0 +1,39 @@
+# Default configuration for medical data
+# Common settings shared across all medical models
+
+setup:
+  # Forecasting configuration
+  horizon: 1                           # Number of lab periods to forecast (1 period = 12 hours)
+  
+  # Column names for plotting/evaluation (actual columns from your data)
+  X_COLNAME: 'heart_rate'              # Vitals column for plotting
+  Y_COLNAME: 'lactate'                 # Labs column for plotting
+
+train:
+  # Training parameters
+  reduce_LR_monitor: 'val_loss'        # What to monitor for LR reduction
+  n_val: 0.2                          # Fraction of training data for validation
+  ES_patience: 10                     # Early stopping patience
+  verbose: 1                          # Verbose level
+
+data:
+  # Updated path - adjust to your actual data location
+  data_folder: 'C:\Users\johnn\Downloads\My Notebooks\sepsis'
+  scale_data: true                    # Normalize features
+  scaler_type: 'minmax'              # Type of scaler ('minmax' or 'standard')
+  
+  # File specifications for your cleaned data
+  vitals_file: 'vitals_forward_filled_cleaned.parquet'    # High-frequency data
+  labs_file: 'labs_filtered_cleaned.parquet'              # Low-frequency data
+  vitals_time_col: 'hour_bin'                     # Time column in vitals
+  labs_time_col: 'bin_start_hour'                 # Time column in labs
+  
+  # Memory management settings
+  chunk_size: 10000                   # Process 10k rows at once
+  max_patients_per_chunk: 50         # Process 50 patients at once
+
+output:
+  save_predictions: true
+  plot_fitted: true
+  export_to_parquet: true            # Export to parquet instead of Excel
+  export_to_csv: true                # Also export to CSV for inspection

@@ -1,0 +1,41 @@
+includes:
+- configs/medical/defaults.yaml
+
+setup:
+  Lx: 24                    # Vitals lookback: 24 hours of history
+  Tx: 1                     # Predict 1 vitals step ahead (1 hour)
+  Ty: 2                     # Labs: 1 lookback + 1 prediction = 2
+  freq_ratio: 12            # 12 vitals measurements per lab measurement
+  bidirectional_encoder: false
+  model_type: 'MTMFSeq2Seq'
+  
+  # NOTE: These will be set automatically by configurator based on your data
+  # dim_x: 8                # Number of vitals features (heart_rate, sbp, dbp, mbp, resp_rate, temperature, spo2, glucose)
+  # dim_y: 28               # Number of lab features (wbc_count, hemoglobin, creatinine, lactate, etc.)
+
+train:
+  # Architecture (scaled for medical data)
+  n_a: 256                  # LSTM hidden units
+  n_s: 512                  # Context vector dimension
+  n_align_x: 32             # Vitals attention alignment
+  n_align_y: 64             # Labs attention alignment
+  fc_x: 256                 # Vitals decoder FC dimension
+  fc_y: 128                 # Labs decoder FC dimension
+
+  # Regularization
+  dropout_rate: 0.3
+  l1reg: 0.0001
+  l2reg: 0.0001
+
+  # Training parameters (conservative for medical data)
+  learning_rate: 0.0002     # Lower LR for stability
+  reduce_LR_factor: 0.5
+  reduce_LR_patience: 15    # More patience for large datasets
+  shuffle: true
+
+  # Data parameters (start smaller for testing)
+  train_size: 10000         # 10k training samples (reduced for initial testing)
+  val_size: 2000            # 2k validation samples
+  batch_size: 32            # Smaller batch size for initial testing
+  epochs: 25                # Fewer epochs for initial testing
+  early_stopping_patience: 10
