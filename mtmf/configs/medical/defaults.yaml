@@ -18,7 +18,7 @@ train:
 
 data:
   # Updated path - adjust to your actual data location
-  data_folder: 'C:\Users\johnn\Downloads\My Notebooks\sepsis'
+  data_folder: 'C:\Users\johnn\Downloads\My Notebooks\sepsis\data_medical'
   scale_data: true                    # Normalize features
   scaler_type: 'minmax'              # Type of scaler ('minmax' or 'standard')
   

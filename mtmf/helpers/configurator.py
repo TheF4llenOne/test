@@ -1,6 +1,5 @@
 """
 Classes for configuring the environment, including loading configs, creating directories etc.
-FIXED VERSION for medical hour-based data
 """
 
 import sys
@@ -81,20 +80,70 @@ class SimEnvConfigurator():
                 pass
             
     def config_args(self, pickle_args = True):
-    
-        # Read parquet files for medical data
-        x = pd.read_parquet(f"{self.args.data_folder}/vitals_forward_filled_cleaned.parquet")
-        y = pd.read_parquet(f"{self.args.data_folder}/labs_filtered_cleaned.parquet")
+        """Handles hour-based medical data properly"""
+        
+        # Read parquet files for medical data using config settings
+        vitals_file = getattr(self.args, 'vitals_file', 'vitals_forward_filled_cleaned.parquet')
+        labs_file = getattr(self.args, 'labs_file', 'labs_filtered_cleaned.parquet')
+        
+        x = pd.read_parquet(f"{self.args.data_folder}/{vitals_file}")
+        y = pd.read_parquet(f"{self.args.data_folder}/{labs_file}")
+        
+        # Get time column names from config or use defaults
+        vitals_time_col = getattr(self.args, 'vitals_time_col', 'hour_bin')
+        labs_time_col = getattr(self.args, 'labs_time_col', 'bin_start_hour')
         
         # Set timestamp columns as index
-        x = x.set_index('hour_bin')
-        y = y.set_index('bin_start_hour')
+        x = x.set_index(vitals_time_col)
+        y = y.set_index(labs_time_col)
         
+        # Convert hour indices to datetime for framework compatibility
+        base_date = pd.Timestamp('2020-01-01')
+        x.index = base_date + pd.to_timedelta(x.index, unit='h')
+        y.index = base_date + pd.to_timedelta(y.index, unit='h')
+        
+        # Round timestamps to hour precision to avoid nanosecond precision issues
+        x.index = x.index.round('H')
+        y.index = y.index.round('H')
+        
+        # FIX: Now handle first_prediction_date correctly using the same base_date
+        if self.raw_first_prediction_date is not None:
+            if isinstance(self.raw_first_prediction_date, (int, float)):
+                # It's an hour index - convert it using the same method as the data
+                prediction_datetime = base_date + pd.to_timedelta(self.raw_first_prediction_date, unit='h')
+                # IMPORTANT: Round to same precision as data
+                prediction_datetime = prediction_datetime.round('H')
+                setattr(self.args, 'first_prediction_date', prediction_datetime)
+                print(f"✅ FIXED: Converted hour index {self.raw_first_prediction_date} to datetime {prediction_datetime}")
+            else:
+                # It's already a datetime string - parse it normally and round
+                prediction_datetime = pd.to_datetime(self.raw_first_prediction_date).round('H')
+                setattr(self.args, 'first_prediction_date', prediction_datetime)
+                print(f"✅ Using datetime string: {prediction_datetime}")
+        else:
+            # Find a reasonable split point (e.g., 80% for training)
+            total_y_points = len(y)
+            split_point_idx = int(0.8 * total_y_points)
+            split_y_time = y.index.sort_values()[split_point_idx]
+            setattr(self.args, 'first_prediction_date', split_y_time)
+            print(f"✅ Auto-calculated prediction date (80% through data): {split_y_time}")
+        
+        # Remove patient ID columns if present (not features for modeling)
+        if 'unique_patient_id' in x.columns:
+            x = x.drop('unique_patient_id', axis=1)
+        if 'unique_patient_id' in y.columns:
+            y = y.drop('unique_patient_id', axis=1)
+            
         xdata, ydata = x.values, y.values
         
-        ## set dimension
+        ## set dimension based on actual data
         setattr(self.args, 'dim_x', xdata.shape[1])
         setattr(self.args, 'dim_y', ydata.shape[1])
+        
+        print(f"Data dimensions: X (vitals) = {xdata.shape}, Y (labs) = {ydata.shape}")
+        print(f"X features ({len(x.columns)}): {list(x.columns)}")
+        print(f"Y features ({len(y.columns)}): {list(y.columns)}")
+        print(f"Time range: {x.index.min()} to {x.index.max()}")
     
         ## setup for benchmark models where the output for high freq is not a sequence
         if self.args.model_type in ['MTMFSeq2One','MLP','RNN','GBM']:
@@ -104,7 +153,7 @@ class SimEnvConfigurator():
             setattr(self.args, 'zero_pad', False)
         else:
             setattr(self.args, 'zero_pad', True)
-            
+        
         if pickle_args:
             with open(f"{self.args.output_folder}/args.pickle","wb") as handle:
                 pickle.dump(self.args, handle, protocol = pickle.HIGHEST_PROTOCOL)
@@ -145,9 +194,13 @@ class EnvConfigurator():
                     for k, v in config[key].items():
                         setattr(args, k, v)
         
-        # Handle first_prediction_date - may not exist for hour-based data
+        # FIX: Don't convert first_prediction_date here - do it later when we know the base_date
+        # Store the raw value for now
         if hasattr(args, 'first_prediction_date'):
-            setattr(args,'first_prediction_date',pd.to_datetime(args.first_prediction_date))
+            # Keep the original value (could be hour index or datetime string)
+            self.raw_first_prediction_date = args.first_prediction_date
+        else:
+            self.raw_first_prediction_date = None
         
         ## ensure cmd line input is of the correct type
         if hasattr(args,'verbose'):
@@ -201,22 +254,29 @@ class EnvConfigurator():
         x = x.set_index(vitals_time_col)
         y = y.set_index(labs_time_col)
         
-        # Handle hour-based data: Convert to datetime for framework compatibility
-        if not hasattr(self.args, 'first_prediction_date'):
-            # Find a reasonable split point (e.g., 80% for training)
-            total_y_points = len(y)
-            split_point_idx = int(0.8 * total_y_points)
-            split_y_hour = y.index.sort_values()[split_point_idx]
-
-            # Create a synthetic datetime for the split point
-            base_date = pd.Timestamp('2020-01-01')
-            setattr(self.args, 'first_prediction_date', base_date)
-            print(f"Using synthetic prediction date: {base_date} (corresponding to hour {split_y_hour})")
-        
         # Convert hour indices to datetime for framework compatibility
         base_date = pd.Timestamp('2020-01-01')
         x.index = base_date + pd.to_timedelta(x.index, unit='h')
         y.index = base_date + pd.to_timedelta(y.index, unit='h')
+        
+        # FIX: Now handle first_prediction_date correctly using the same base_date
+        if self.raw_first_prediction_date is not None:
+            if isinstance(self.raw_first_prediction_date, (int, float)):
+                # It's an hour index - convert it using the same method as the data
+                prediction_datetime = base_date + pd.to_timedelta(self.raw_first_prediction_date, unit='h')
+                setattr(self.args, 'first_prediction_date', prediction_datetime)
+                print(f"✅ FIXED: Converted hour index {self.raw_first_prediction_date} to datetime {prediction_datetime}")
+            else:
+                # It's already a datetime string - parse it normally
+                setattr(self.args, 'first_prediction_date', pd.to_datetime(self.raw_first_prediction_date))
+                print(f"✅ Using datetime string: {self.args.first_prediction_date}")
+        else:
+            # Find a reasonable split point (e.g., 80% for training)
+            total_y_points = len(y)
+            split_point_idx = int(0.8 * total_y_points)
+            split_y_time = y.index.sort_values()[split_point_idx]
+            setattr(self.args, 'first_prediction_date', split_y_time)
+            print(f"✅ Auto-calculated prediction date (80% through data): {split_y_time}")
         
         # Remove patient ID columns if present (not features for modeling)
         if 'unique_patient_id' in x.columns:

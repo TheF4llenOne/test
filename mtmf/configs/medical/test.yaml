@@ -1,0 +1,34 @@
+
+includes:
+- configs/medical/defaults.yaml
+
+setup:
+  Lx: 6                     # Much smaller lookback
+  Tx: 1                     
+  Ty: 2                     
+  freq_ratio: 12            
+  bidirectional_encoder: false
+  model_type: 'MTMFSeq2Seq'
+
+train:
+  n_a: 32                   # Very small architecture
+  n_s: 64                   
+  n_align_x: 8              
+  n_align_y: 16             
+  fc_x: 32                  
+  fc_y: 16                  
+  
+  dropout_rate: 0.1
+  l1reg: 0.00001
+  l2reg: 0.00001
+  
+  learning_rate: 0.01
+  reduce_LR_factor: 0.5
+  reduce_LR_patience: 5
+  shuffle: true
+  
+  train_size: 100           # Very small for testing
+  val_size: 20              
+  batch_size: 8             
+  epochs: 2                 # Just to test it works
+  early_stopping_patience: 2

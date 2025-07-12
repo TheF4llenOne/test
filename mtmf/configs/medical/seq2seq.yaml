@@ -8,6 +8,10 @@ setup:
   freq_ratio: 12            # 12 vitals measurements per lab measurement
   bidirectional_encoder: false
   model_type: 'MTMFSeq2Seq'
+
+data:
+  # THE FIX: Add this line to override the data section from defaults
+  first_prediction_date: 67388.2
   
   # NOTE: These will be set automatically by configurator based on your data
   # dim_x: 8                # Number of vitals features (heart_rate, sbp, dbp, mbp, resp_rate, temperature, spo2, glucose)
@@ -23,7 +27,7 @@ train:
   fc_y: 128                 # Labs decoder FC dimension
 
   # Regularization
-  dropout_rate: 0.3
+  dropout_rate: 0.2
   l1reg: 0.0001
   l2reg: 0.0001
 

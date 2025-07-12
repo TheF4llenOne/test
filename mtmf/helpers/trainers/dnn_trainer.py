@@ -144,6 +144,10 @@ class nnTrainer:
         x.index = base_date + pd.to_timedelta(x.index, unit='h')
         y.index = base_date + pd.to_timedelta(y.index, unit='h')
         
+        # FIX: Add the same rounding as configurator to ensure exact matches
+        x.index = x.index.round('H')
+        y.index = y.index.round('H')
+        
         # Remove patient ID columns if present (not features for modeling)
         if 'unique_patient_id' in x.columns:
             x = x.drop('unique_patient_id', axis=1)
@@ -166,6 +170,10 @@ class nnTrainer:
         print(f"  Labs (Y): {ydata.shape} - {list(y.columns)}")
         print(f"  Time range: {x.index.min()} to {x.index.max()}")
         
+        # Debug: Print some timestamps to verify rounding
+        print(f"  First few vitals timestamps: {x.index[:3].tolist()}")
+        print(f"  First few labs timestamps: {y.index[:3].tolist()}")
+        
     def generate_train_val_datasets(self, x_train_end, y_train_end, n_val=None):
         """
         helper function for generating train/val dataset; the reason for not adding them as attributes is out of
@@ -187,9 +195,23 @@ class nnTrainer:
         
         print(f'[train samples generated] inputs dims: {[temp.shape for temp in train_inputs]}; target dims: {[temp.shape for temp in train_targets]} {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         
+        # FIX: Synchronize sample counts for mixed-frequency data
+        # Find the minimum number of samples across all inputs/targets
+        all_sample_counts = [inp.shape[0] for inp in train_inputs] + [tgt.shape[0] for tgt in train_targets]
+        min_samples = min(all_sample_counts)
+        
+        print(f'🔧 SYNC FIX: Sample counts before sync: {all_sample_counts}')
+        print(f'🔧 SYNC FIX: Using minimum sample count: {min_samples}')
+        
+        # Truncate all arrays to the minimum sample count
+        train_inputs = [inp[:min_samples] for inp in train_inputs]
+        train_targets = [tgt[:min_samples] for tgt in train_targets]
+        
+        print(f'🔧 SYNC FIX: Sample counts after sync: {[inp.shape[0] for inp in train_inputs + train_targets]}')
+        
         if n_val is not None:
             if isinstance(n_val, float):
-                n_val = round(train_inputs[0].shape[0] * n_val)
+                n_val = round(min_samples * n_val)  # Use min_samples instead of train_inputs[0].shape[0]
             
             train_inputs, val_inputs = [x[:-n_val] for x in train_inputs], [x[-n_val:] for x in train_inputs]
             train_targets, val_targets = [x[:-n_val] for x in train_targets], [x[-n_val:] for x in train_targets]
@@ -448,18 +470,79 @@ class nnTrainer:
                 temp.update(dict(zip(y_numeric_col_keys, list(y_pred[:,col_id]))))
                 y_PRED_collector.append(temp)
         
+    def find_closest_index_with_tolerance(self, timestamp_list, target_timestamp, tolerance_hours=4):
+        """
+        Find the closest timestamp within tolerance hours, return its index
+        """
+        import pandas as pd
+        
+        timestamps = pd.Series(timestamp_list)
+        time_diffs = (timestamps - target_timestamp).abs()
+        
+        # Filter to only timestamps within tolerance
+        tolerance_td = pd.Timedelta(hours=tolerance_hours)
+        within_tolerance = time_diffs <= tolerance_td
+        
+        if not within_tolerance.any():
+            return None  # No timestamps within tolerance
+        
+        # Find the closest timestamp within tolerance
+        closest_idx = time_diffs[within_tolerance].argmin()
+        # Get the actual index in the original list
+        actual_idx = timestamps[within_tolerance].index[closest_idx]
+        
+        return actual_idx
+
     def run_forecast(self):
-    
         """ main function """
     
         args = self.args
+        
+        # FINAL FIX: Ensure first_prediction_date has same precision as data
+        if hasattr(args, 'first_prediction_date'):
+            original_date = args.first_prediction_date
+            args.first_prediction_date = args.first_prediction_date.round('H')
+            print(f"🔧 FINAL FIX: Rounded first_prediction_date from {original_date} to {args.first_prediction_date}")
+        
+        # Check timestamp availability with tolerance
+        print(f"🔍 Looking for {args.first_prediction_date} with ±4 hour tolerance...")
+        
+        # For vitals: exact match (hourly data)
+        if args.first_prediction_date in self.df_info['x_index']:
+            x_prediction_idx = self.df_info['x_index'].index(args.first_prediction_date)
+            print(f"✅ Found exact vitals timestamp at index {x_prediction_idx}")
+        else:
+            print(f"❌ Exact vitals timestamp not found")
+            return
+        
+        # For labs: tolerance-based match (every 12 hours)
+        y_prediction_idx = self.find_closest_index_with_tolerance(
+            self.df_info['y_index'], 
+            args.first_prediction_date, 
+            tolerance_hours=4
+        )
+        
+        if y_prediction_idx is not None:
+            actual_y_timestamp = self.df_info['y_index'][y_prediction_idx]
+            time_diff = abs((actual_y_timestamp - args.first_prediction_date).total_seconds() / 3600)
+            print(f"✅ Found labs timestamp at index {y_prediction_idx}: {actual_y_timestamp}")
+            print(f"   Time difference: {time_diff:.1f} hours (within 4-hour tolerance)")
+        else:
+            print(f"❌ No labs timestamp found within 4-hour tolerance")
+            return
+        
         ## initialization for recording the forecast
         x_PRED_collector, y_PRED_collector = [], []
         
         if args.mode == 'static':
             
-            x_train_end = self.df_info['x_index'].index(args.first_prediction_date) - args.freq_ratio + 1 ## +1 to ensure the index is inclusive
-            y_train_end = self.df_info['y_index'].index(args.first_prediction_date) - 2 + 1 ## +1 to ensure the index is inclusive
+            # Use the found indices with tolerance
+            x_train_end = x_prediction_idx - args.freq_ratio + 1 ## +1 to ensure the index is inclusive
+            y_train_end = y_prediction_idx - 2 + 1 ## +1 to ensure the index is inclusive
+            
+            print(f"📊 Training data endpoints: x_train_end={x_train_end}, y_train_end={y_train_end}")
+            print(f"   Using vitals up to: {self.df_info['x_index'][x_prediction_idx]}")
+            print(f"   Using labs up to: {self.df_info['y_index'][y_prediction_idx]}")
             
             ## set up and train model
             dp, train_data, val_data = self.generate_train_val_datasets(x_train_end, y_train_end, n_val=args.n_val)
@@ -468,9 +551,9 @@ class nnTrainer:
             predictor = self.config_predictor(model, dp)
             
             ## run rolling forecast based on the trained model
-            y_start_id = self.df_info['y_index'].index(args.first_prediction_date) - (args.Ty - 1)
+            y_start_id = y_prediction_idx - (args.Ty - 1)
             x_start_id = args.freq_ratio * (y_start_id - 1)
-            test_size = self.df_info['y_total_obs'] - self.df_info['y_index'].index(args.first_prediction_date)
+            test_size = self.df_info['y_total_obs'] - y_prediction_idx
             
             print(f'[forecast starts] {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
             for experiment_id in range(test_size):
@@ -491,8 +574,9 @@ class nnTrainer:
             print(f'[forecast ends] {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
             
         elif args.mode == 'dynamic':
-        
-            offset = self.df_info['y_index'].index(args.first_prediction_date)
+            
+            # For dynamic mode, apply tolerance to each prediction date
+            offset = y_prediction_idx
             test_size = self.df_info['y_total_obs'] - offset
             
             for experiment_id in range(test_size):
@@ -500,16 +584,27 @@ class nnTrainer:
                 pred_date = self.df_info['y_index'][offset + experiment_id]
                 
                 print(f' >> id = {experiment_id+1}/{test_size}: next QE = {pred_date.strftime("%Y-%m-%d")}')
+                
+                # Find corresponding x index with tolerance
+                x_pred_idx = self.find_closest_index_with_tolerance(
+                    self.df_info['x_index'], pred_date, tolerance_hours=4
+                )
+                
+                if x_pred_idx is None:
+                    print(f"   Skipping - no vitals data within tolerance")
+                    continue
+                
                 ## set up and train model
-                x_train_end = self.df_info['x_index'].index(pred_date) - args.freq_ratio + 1 ## +1 to ensure the index is inclusive
-                y_train_end = self.df_info['y_index'].index(pred_date) - 2 + 1 ## +1 to ensure the index is inclusive
+                x_train_end = x_pred_idx - args.freq_ratio + 1
+                y_train_end = (offset + experiment_id) - 2 + 1
+                
                 dp, train_data, val_data = self.generate_train_val_datasets(x_train_end, y_train_end, n_val=args.n_val)
                 model = self.config_and_train_model(train_data, val_data=val_data)
                 self.eval_train(model, dp, train_data)
                 predictor = self.config_predictor(model, dp)
                 
                 ## run forecast
-                y_start_id = self.df_info['y_index'].index(pred_date) - (args.Ty - 1)
+                y_start_id = (offset + experiment_id) - (args.Ty - 1)
                 x_start_id = args.freq_ratio * (y_start_id - 1)
                 T_datestamp = self.df_info['x_index'][x_start_id + args.Lx - 1]
                 
@@ -518,21 +613,28 @@ class nnTrainer:
                 
                 del predictor
                 del model
-                torch.cuda.empty_cache()  # PyTorch equivalent of K.clear_session()
+                # Clear GPU memory if using PyTorch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                     
-        # Export logic with parquet support
         x_PRED_df, y_PRED_df = pd.DataFrame(x_PRED_collector), pd.DataFrame(y_PRED_collector)
         
-        # Export to CSV if requested
-        if hasattr(args, 'export_to_csv') and args.export_to_csv:
-            x_PRED_df.to_csv(f'{args.output_folder}/x_prediction.csv', index=False)
-            y_PRED_df.to_csv(f'{args.output_folder}/y_prediction.csv', index=False)
-        
-        # Export to parquet if requested
+        # Export results based on config settings
         if hasattr(args, 'export_to_parquet') and args.export_to_parquet:
-            x_PRED_df.to_parquet(f'{args.output_folder}/x_prediction.parquet', index=False)
-            y_PRED_df.to_parquet(f'{args.output_folder}/y_prediction.parquet', index=False)
+            print(f'[exporting predictions to parquet] {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            x_PRED_df.to_parquet(f'{args.output_folder}/x_predictions.parquet', index=False)
+            y_PRED_df.to_parquet(f'{args.output_folder}/y_predictions.parquet', index=False)
         
-        # Save predictions as pickle
-        with open(f"{args.output_folder}/predictions.pickle", "wb") as handle:
-            pickle.dump({'x_target_pred': x_PRED_collector, 'y_target_pred': y_PRED_collector}, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if hasattr(args, 'export_to_csv') and args.export_to_csv:
+            print(f'[exporting predictions to CSV] {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            x_PRED_df.to_csv(f'{args.output_folder}/x_predictions.csv', index=False)
+            y_PRED_df.to_csv(f'{args.output_folder}/y_predictions.csv', index=False)
+        
+        # Default Excel export
+        with pd.ExcelWriter(args.output_filename) as writer:
+            x_PRED_df.to_excel(writer, sheet_name='x_prediction', index=False)
+            y_PRED_df.to_excel(writer, sheet_name='y_prediction', index=False)
+        
+        print(f'[predictions saved] {args.output_filename} {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        print(f'✅ FORECAST COMPLETED SUCCESSFULLY!')
+        print(f'   Generated {len(x_PRED_df)} vitals predictions and {len(y_PRED_df)} labs predictions')
